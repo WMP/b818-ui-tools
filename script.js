@@ -1,153 +1,168 @@
 (()=>{'use strict';
   const $ = window.jQuery || window.$;
-  if(!$){ console.warn('Brak jQuery – uruchom w panelu B818.'); return; }
+  if(!$){ console.warn('[GEMINI-UI-UNLOCK v4.2-final] jQuery not found – run on router UI page.'); return; }
 
-  // --- Konfiguracja ---
-  const MAIN = '#mobileconnection_page';
-  const MODAL = '#add_apn_item_win';
-  const DROPDOWNS = '.select_list, .dropdown-menu, [role="listbox"], [role="menu"]';
-  const MAIN_IDS = [
-    '#apn_connection_mode',
-    '#apn_automatic_disconnection_time_select',
-    '#apn_power_on_dialing_automatically',
-    '#apn_retry_switch',
-    '#apn_pdn_switch',
-    '#network_mtu'
-  ];
-  const LOCK_CLASSES = ['disabled','disable','disabled2','check_off_disable','check_on_disable'];
+  try{ window.GEMINI_UI_UNLOCK_V4 && window.GEMINI_UI_UNLOCK_V4.stop && window.GEMINI_UI_UNLOCK_V4.stop(); }catch(e){}
 
-  // --- Jednorazowy CSS (lekki) ---
-  (function injectCSS(){
-    if(document.getElementById('apnall-style')) return;
+  const NS = '.gemini_ui_unlock_v4';
+  let observer;
+
+  function injectStyles() {
+    const styleId = 'gemini-unlock-styles';
+    if (document.getElementById(styleId)) return;
     const css = `
-      /* miękko domykamy dropdowny w głównym oknie – bez !important */
-      ${MAIN} ${DROPDOWNS} { display:none; }
+        .gemini-unlocked .control-label, .gemini-unlocked.control-label, 
+        .gemini-unlocked .control-label-win, .gemini-unlocked > .control-label-win, 
+        .gemini-unlocked > div > .control-label-win, [id^=apn_list_input_dns_switch_operate] .control-label-win {
+            font-style: italic !important;
+            color: #4a148c !important;
+        }
     `;
-    const st = document.createElement('style');
-    st.id = 'apnall-style';
-    st.appendChild(document.createTextNode(css));
-    document.head.appendChild(st);
-  })();
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.type = 'text/css';
+    style.appendChild(document.createTextNode(css));
+    document.head.appendChild(style);
+  }
 
-  // --- Pomocnicze: miękkie domykanie dropdownów (bez !important) ---
+  const FORCE_HIDE_SELECTORS = ['#emui_content_pop_win', '.pop_win', '#submit_fade', '.toast_location', '.modal-backdrop', '.overlay', '.submit_white_content', '.submit_black_overlay', '#confirm_light', '.page_help_info'].join(', ');
+  const DISCOVERY_BOUNDARY_SELECTORS = ['[id$="_page"]', '[id$="_win"]', '.out_win_content', '.submit_background'].join(', ');
+  const IGNORE_DROPDOWNS = '.select_list, .dropdown-menu, [role="listbox"], [role="menu"]';
+
+  const PASS_OPEN_WRAPS_SEL = '[id$="_password_open"],[id$="_wpa_key_open"],[id$="_wifi_key_open"],[id*="_pwd_open"],[id*="_pass_open"]';
+  const PASS_OPEN_TEXT_INPUTS_SEL = 'input[id$="_password_text"],input[id$="_wpa_key_text"],input[id$="_wifi_key_text"],input[id*="_pwd_text"],input.input_profile_user_password[type="text"]';
+  const PASS_CLOSE_WRAPS_SEL = '[id$="_password_close"],[id$="_wpa_key_close"],[id$="_wifi_key_close"],[id*="_pwd_close"],[id*="_pass_close"]';
+
+  const debounce = (fn, ms=250)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+
+  function getCurrentPageRoot(){
+    const PAGE_CONTAINERS = ['#rightpagearea', '#mobileconnection_page','#network_page','#wifi_page','#system_page','#settings_page','.page', '[id$=\"_page\"]', '#add_apn_item_win'];
+    for(const s of PAGE_CONTAINERS){ const $el=$(s); if($el.length && $el.is(':visible')) return $el; }
+    return $('body');
+  }
+
+  function showEl(el){
+    if(!el) return;
+    const $el = $(el);
+    if ($el.is(FORCE_HIDE_SELECTORS) || $el.is(DISCOVERY_BOUNDARY_SELECTORS) || $el.is(IGNORE_DROPDOWNS)) return;
+    const wasHidden = $el.is(':hidden');
+    el.removeAttribute?.('hidden');
+    el.removeAttribute?.('aria-hidden');
+    el.classList?.remove('hide', 'ng-hide', 'd-none');
+    if (el.style) { el.style.setProperty('display', 'block'); el.style.setProperty('visibility', 'visible'); el.style.setProperty('opacity', '1'); }
+    if (wasHidden) { $el.addClass('gemini-unlocked'); }
+  }
+  
+  function forceHide(el){ if(!el) return; if(el.style){ el.style.setProperty('display','none','important'); el.style.setProperty('visibility','hidden','important'); } el.classList?.add('hide'); }
+  function forceShow(el){ if(!el) return; if(el.style){ el.style.setProperty('display','block','important'); el.style.setProperty('visibility','visible','important'); el.style.setProperty('opacity','1','important'); } el.classList?.remove('hide','ng-hide','d-none'); }
+  
   function closeDropdowns(scope){
-    const $scope = scope ? $(scope) : $(document);
-    $scope.find(DROPDOWNS).each(function(){
-      this.style && this.style.setProperty('display','none');
-      this.classList && this.classList.add('hide');
+    $(scope).find(IGNORE_DROPDOWNS).each(function(){
+        const $list = $(this);
+        const lastOpened = $list.data('gemini-just-opened');
+        if ($list.is(':visible') && lastOpened && (Date.now() - lastOpened < 1000)) {
+            return;
+        }
+        $list.hide();
     });
   }
 
-  // --- Główne okno ---
-  function revealMainOnce(){
-    const $mc = $(MAIN);
-    if(!$mc.length || !$mc.is(':visible')) return;
+  function keepGlobalsHidden(){ $(FORCE_HIDE_SELECTORS).each(function(){ forceHide(this); }); }
 
-    $mc.find('#mobileconnection_display').removeClass('hide').css('display','block');
-    MAIN_IDS.forEach(sel => $mc.find(sel).removeClass('hide').css('display','block'));
-    closeDropdowns($mc);
-
-    // Tryb połączenia:
-    // 1) chowamy TYLKO kontener listy (bez dzieci/opcji)
-    const $list  = $mc.find('#apn_connection_mode_select_list');
-    $list.css('display','none').addClass('hide'); // nie ruszamy wnętrza listy
-
-    // 2) na stałe ukrywamy blok tekstowy pod dropdownem (nie pokazujemy go w ogóle)
-    const $cText = $mc.find('#connection_mode_text');
-    $cText.css('display','none');
-  }
-  function burstMain(){ setTimeout(revealMainOnce,120); setTimeout(revealMainOnce,300); setTimeout(revealMainOnce,600); }
-
-  // --- Modal APN (pokazujemy tylko wskazane elementy; NIE ruszamy haseł/oczek) ---
-  function showEl(el){
-    if(!el) return;
-    el.removeAttribute && el.removeAttribute('hidden');
-    el.classList && el.classList.remove('hide','ng-hide','d-none');
-    el.style && el.style.setProperty('display','block');
-    el.style && el.style.setProperty('visibility','visible');
-    el.style && el.style.setProperty('opacity','1');
+  function enforcePasswordsClosed(scope){
+    const $s = scope && scope.jquery ? scope : $(scope || document);
+    $s.find(PASS_OPEN_WRAPS_SEL).each(function(){ forceHide(this); });
+    $s.find(PASS_OPEN_TEXT_INPUTS_SEL).each(function(){ forceHide(this); });
+    $s.find('.ic_eye_open').each(function(){ forceHide(this); });
+    $s.find(PASS_CLOSE_WRAPS_SEL).each(function(){ forceShow(this); });
   }
 
-  function revealModalOnce(){
-    const $m = $(MODAL);
-    if(!$m.length || !$m.is(':visible')) return;
+  function revealPageOnce(){
+    const $root = getCurrentPageRoot();
+    if(!$root.length) return;
 
-    ['#ip_type','#ip_type_value','#ip_type_value_list',
-     '#apn_list_input_dns_switch',
-     '#profile_dns_status_table','#profile_ipv6_dns_status_table',
-     '#apn_list_input_dns_operate'
-    ].forEach(sel => $m.find(sel).each(function(){ showEl(this); }));
+    const controlsSelector = 'input, select, textarea, .switch_on, .switch_off, .select_on_normal, .btn, .control-label, .control-label-win';
+    $root.find(controlsSelector).filter(':hidden').each(function() {
+        const $control = $(this);
+        let $elementToShow = $control;
+        const parents = $control.parentsUntil($root);
+        for (let i = 0; i < parents.length; i++) {
+            const $parent = $(parents[i]);
+            if ($parent.is(':hidden')) {
+                $elementToShow = $parent;
+            }
+        }
+        if ($elementToShow.is(DISCOVERY_BOUNDARY_SELECTORS) || $elementToShow.is(FORCE_HIDE_SELECTORS)) {
+            return;
+        }
+        showEl($elementToShow[0]);
+    });
 
-    const $sw = $m.find('#apn_list_input_dns_switch');
-    if($sw.length){
-      LOCK_CLASSES.forEach(c => $sw.removeClass(c));
-      $sw.removeClass('check_off').addClass('check_on');
-      const cb = $sw.find('input[type=checkbox]');
-      if(cb.length){ cb.prop('checked', true).trigger('change'); }
-    }
+    $root.find('input, select, textarea').each(function(){
+      const el = this;
+      const type = (el.type || '').toLowerCase();
+      if(el.hasAttribute('disabled') && type !== 'button' && type !== 'submit'){
+        el.removeAttribute('disabled');
+      }
+    });
 
-    closeDropdowns($m); // miękko – można otworzyć później
+    keepGlobalsHidden();
+    closeDropdowns($root);
+    enforcePasswordsClosed($root);
   }
-  function burstModal(){ setTimeout(revealModalOnce,120); setTimeout(revealModalOnce,300); setTimeout(revealModalOnce,600); }
 
-  // --- Hooki ---
-  const NS = '.apnall';
-  const NAV_SEL = [
-    '#menu_mobileconnection',
-    'a[href*="mobileconnection"]',
-    '#nav_settings_internet,#nav_internet'
-  ].join(',');
+  const revealDebounced = debounce(revealPageOnce);
 
-  $(document).off('click'+NS, NAV_SEL)
-             .on('click'+NS, NAV_SEL, burstMain);
+  function setupObserver(){
+      const targetNode = document.body;
+      if (!targetNode) return;
+      observer = new MutationObserver((mutations) => {
+        let needsReveal = false;
+        mutations.forEach((mutation) => {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                const $target = $(mutation.target);
+                if ($target.is(IGNORE_DROPDOWNS) && $target.is(':visible')) {
+                    $target.data('gemini-just-opened', Date.now());
+                }
+            }
+            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                needsReveal = true;
+            }
+        });
+        if (needsReveal) {
+            revealDebounced();
+        }
+      });
+      observer.observe(targetNode, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+  }
 
-  $(document).off('click'+NS, '#add_apn_item_win .close, #add_apn_item_win [id*="cancel"], #add_apn_item_win [class*="cancel"], #add_apn_item_win .win_close, #add_apn_item_win [lang-id="common_cancel"], #add_apn_item_win [lang-id="common_ok"], #add_apn_item_win [id*="save"]')
-             .on('click'+NS,  '#add_apn_item_win .close, #add_apn_item_win [id*="cancel"], #add_apn_item_win [class*="cancel"], #add_apn_item_win .win_close, #add_apn_item_win [lang-id="common_cancel"], #add_apn_item_win [lang-id="common_ok"], #add_apn_item_win [id*="save"]',
-               ()=> setTimeout(burstMain, 200));
+  // Dedicated handler ONLY for dropdowns revealed by this script.
+  $(document).on('click'+NS, '.select_on_normal.gemini-unlocked', function() {
+      const $list = $(this).siblings(IGNORE_DROPDOWNS).first();
+      if (!$list.length) return;
 
-  $(document).off('click'+NS, '#apn_new')
-             .on('click'+NS,  '#apn_new', burstModal);
+      if ($list.is(':not(:visible)')) {
+          $(IGNORE_DROPDOWNS).not($list).hide();
+          $list.data('gemini-just-opened', Date.now()).show();
+      } else {
+          $list.removeData('gemini-just-opened').hide();
+      }
+  });
 
-  $(document).off('click'+NS, '#apn_lists [id^=apn_list_], #apn_lists [id^=apn_list_name_]')
-             .on('click'+NS,  '#apn_lists [id^=apn_list_], #apn_lists [id^=apn_list_name_]', burstModal);
+  function stop(){
+    $(document).off(NS);
+    if(observer) observer.disconnect();
+    const style = document.getElementById('gemini-unlock-styles');
+    if(style) style.remove();
+    $('.gemini-unlocked').removeClass('gemini-unlocked');
+    console.log('[GEMINI-UI-UNLOCK v4.2-final] stopped.');
+  }
 
-  // --- Otwieracz dropdownów (ogólny) ---
-  $(document).off('click'+NS, '.select_on_normal')
-             .on('click'+NS,  '.select_on_normal', function(){
-                const $list = $(this).siblings('.select_list');
-                if($list.length){ $list.removeClass('hide').css('display','block'); }
-             });
+  window.GEMINI_UI_UNLOCK_V4 = { stop };
 
-  // --- SPECJALNY: Tryb połączenia – otwarcie listy (tekst pod spodem i tak jest wyłączony na stałe) ---
-  $(document).off('click'+NS, '#apn_connection_mode_select')
-             .on('click'+NS,  '#apn_connection_mode_select', function(){
-                const $all  = $('#apn_connection_mode_select_all');
-                const $list = $all.find('#apn_connection_mode_select_list');
-                $list.removeClass('hide').css('display','block');
-                // #connection_mode_text zostaje ukryty permanentnie
-             });
-
-  // --- SPECJALNY: Tryb połączenia – wybór opcji i zamknięcie listy (bez przywracania tekstu) ---
-  $(document).off('click'+NS, '#apn_connection_mode_select_list .select_medium')
-             .on('click'+NS,  '#apn_connection_mode_select_list .select_medium', function(){
-                const $sel  = $('#apn_connection_mode_select');
-                const $list = $('#apn_connection_mode_select_list');
-                const opt = $(this).attr('option');
-                if(typeof opt !== 'undefined'){ $sel.attr('value', String(opt)); }
-                $list.addClass('hide').css('display','none');
-                // nie pokazujemy #connection_mode_text
-             });
-
-  // --- Eksport ---
-  window.APNALL = {
-    revealMain: revealMainOnce,
-    burstMain:  burstMain,
-    revealModal: revealModalOnce,
-    burstModal:  burstModal,
-    stop: ()=>{ $(document).off(NS); const s=document.getElementById('apnall-style'); if(s) s.remove(); console.log('[APNALL] stopped'); }
-  };
-
-  // start
-  burstMain();
-  console.log('[APNALL] aktywny: tekst pod dropdownem Trybu połączenia ukryty od startu. Ręcznie: APNALL.revealMain(), APNALL.revealModal(), APNALL.stop()');
+  injectStyles();
+  revealPageOnce();
+  setTimeout(revealPageOnce, 500);
+  setupObserver();
+  console.log('[GEMINI-UI-UNLOCK v4.2-final] active.');
 })();
