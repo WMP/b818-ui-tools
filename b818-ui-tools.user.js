@@ -117,6 +117,15 @@ function revealPageOnce(){
     }
   });
 
+  // Handle disabled switch-like divs
+  $root.find('.controls-win.disabled.check_off_disable').each(function(){
+    const $el = $(this);
+    // Check if it's a switch element (e.g., apn_list_input_dns_switch)
+    if ($el.attr('id') && $el.attr('id').endsWith('_switch')) {
+      $el.removeClass('disabled check_off_disable');
+    }
+  });
+
   keepGlobalsHidden();
   closeDropdowns($root);
   enforcePasswordsClosed($root);
