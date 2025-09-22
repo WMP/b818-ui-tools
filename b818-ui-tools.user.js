@@ -13,6 +13,12 @@
 const $ = window.jQuery || window.$;
 if(!$){ console.warn('[GEMINI-UI-UNLOCK v4.2-final] jQuery not found – run on router UI page.'); return; }
 
+// Do not run on /html/index.html to avoid interfering with the login page's appearance.
+if (window.location.pathname.includes('/html/index.html')) {
+  console.log('[GEMINI-UI-UNLOCK v4.2-final] Script not running on /html/index.html.');
+  return;
+}
+
 try{ window.GEMINI_UI_UNLOCK_V4 && window.GEMINI_UI_UNLOCK_V4.stop && window.GEMINI_UI_UNLOCK_V4.stop(); }catch(e){}
 
 const NS = '.gemini_ui_unlock_v4';
