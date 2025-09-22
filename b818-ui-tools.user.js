@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name        b818-ui-tools
 // @namespace   http://tampermonkey.net/
-// @version     0.1
+// @version     0.2
 // @description The script shows the default hidden configuration options in the huawei b818 router
-// @author      You
+// @author      WMP
+// @homepageURL https://github.com/WMP/b818-ui-tools
 // @match       http://192.168.*/*
 // @grant       none
-// @require     https://code.jquery.com/jquery-3.6.0.min.js
 // ==/UserScript==
 
 'use strict';
