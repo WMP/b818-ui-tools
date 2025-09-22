@@ -5,7 +5,7 @@
 // @description The script shows the default hidden configuration options in the huawei b818 router
 // @author      WMP
 // @homepageURL https://github.com/WMP/b818-ui-tools
-// @match       http://192.168.*/*
+// @match       http://*/*
 // @grant       none
 // ==/UserScript==
 
